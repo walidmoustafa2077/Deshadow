@@ -17,8 +17,15 @@ Usage (Kaggle):
 """
 import argparse
 import os
+import sys
 from pathlib import Path
 from collections import defaultdict
+
+# Ensure the project root is on sys.path so `from src.*` imports work
+# when running as `python src/train_stage1.py`.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import torch
 import torch.nn as nn
