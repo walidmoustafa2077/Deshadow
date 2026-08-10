@@ -1,19 +1,19 @@
 """Dataset loader for the Mixed_Shadow_Dataset.
 
 Structure:
-    Mixed_Shadow_Dataset/
+    <root>/
     ├── train/
-    │   ├── input/    (shadow images, named by New_Name e.g. 00001.jpg)
+    │   ├── input/    (shadow images)
     │   ├── mask/     (shadow masks)
-    │   ├── target/   (shadow-free images)
-    │   └── train_metadata.csv
+    │   └── target/   (shadow-free images)
     └── test/
         ├── input/
         ├── mask/
-        ├── target/
-        └── test_metadata.csv
+        └── target/
 
-The CSV maps New_Name -> (Source_Dataset, Original_Name, Original_Index).
+Image names are loaded from the input/ folder. If a metadata CSV is provided,
+it is used to filter/order the names (New_Name column); otherwise all files in
+input/ are used.
 """
 import os
 import csv
@@ -29,9 +29,9 @@ class ShadowRemovalDataset(Dataset):
     """Loads (input, target) shadow/shadow-free pairs, optionally with mask.
 
     Args:
-        root: path to the dataset folder (e.g. Mixed_Shadow_Dataset_1024x768).
+        root: path to the dataset folder (e.g. master_mix_192x256).
         split: 'train' or 'test'.
-        csv_path: path to the metadata CSV.
+        csv_path: optional path to a metadata CSV (New_Name column).
         size: (H, W) to resize images to. None = keep original.
         use_mask: whether to also load the shadow mask.
         augment: whether to apply random horizontal flip (train only).
@@ -50,21 +50,31 @@ class ShadowRemovalDataset(Dataset):
         self.target_dir = os.path.join(split_dir, "target")
         self.mask_dir = os.path.join(split_dir, "mask")
 
-        # Load image names from CSV (New_Name column).
-        if csv_path is None:
-            csv_path = os.path.join(root, f"{split}_metadata.csv")
-        self.names = self._load_names(csv_path)
+        # Load image names: from CSV if provided, else list input/ folder.
+        if csv_path is not None and os.path.exists(csv_path):
+            self.names = self._load_names_from_csv(csv_path)
+        else:
+            self.names = self._load_names_from_dir(self.input_dir)
 
         self.to_tensor = ToTensor()
         self.resize = Resize(size) if size is not None else None
         self.flip = RandomHorizontalFlip(0.5)
 
-    def _load_names(self, csv_path):
+    def _load_names_from_csv(self, csv_path):
         names = []
         with open(csv_path, "r") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 names.append(row["New_Name"])
+        return names
+
+    def _load_names_from_dir(self, input_dir):
+        """List all image files in the input/ folder (no CSV needed)."""
+        exts = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+        names = sorted(
+            f for f in os.listdir(input_dir)
+            if f.lower().endswith(exts)
+        )
         return names
 
     def __len__(self):

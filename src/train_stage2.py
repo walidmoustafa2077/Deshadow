@@ -41,7 +41,9 @@ from src.utils.visualization import save_sample
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data_root", default="Mixed_Shadow_Dataset_1024x768")
-    p.add_argument("--csv", default="train_metadata.csv")
+    p.add_argument("--csv", default=None,
+                   help="Optional metadata CSV (New_Name column). If omitted, "
+                        "image names are listed from the input/ folder.")
     p.add_argument("--ioanet_ckpt", required=True,
                    help="path to Stage 1 IOANet checkpoint")
     p.add_argument("--epochs", type=int, default=200)
@@ -99,12 +101,14 @@ def main():
     print("=" * 100)
 
     # --- Dataset (high-res) ---
+    # If a CSV is provided, derive the test CSV from it; else use folder listing.
+    val_csv = args.csv.replace("train", "test") if args.csv else None
     train_ds = ShadowRemovalDataset(
         root=args.data_root, split="train", csv_path=args.csv,
         size=HIGH_RES, use_mask=True, augment=True,
     )
     val_ds = ShadowRemovalDataset(
-        root=args.data_root, split="test", csv_path=args.csv.replace("train", "test"),
+        root=args.data_root, split="test", csv_path=val_csv,
         size=HIGH_RES, use_mask=True, augment=False,
     )
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
