@@ -4,25 +4,24 @@ This guide covers training LP-IOANet on Kaggle using the **Mixed_Shadow_Dataset*
 
 ## Dataset structure (on Kaggle)
 
+Two separate Kaggle datasets:
+
 ```
-Mixed_Shadow_Dataset_1024x768/        # high-res version (Stage 2)
+master_mix_192x256/          # low-res version (Stage 1)
 ├── train/
-│   ├── input/     (shadow images, e.g. 00001.jpg)
+│   ├── input/     (shadow images)
 │   ├── mask/      (shadow masks)
-│   ├── target/    (shadow-free images)
-│   └── train_metadata.csv
+│   └── target/    (shadow-free images)
 └── test/
     ├── input/
     ├── mask/
-    ├── target/
-    └── test_metadata.csv
+    └── target/
 
-Mixed_Shadow_Dataset_256x192/         # low-res version (Stage 1)
+master_mix_768x1024/         # high-res version (Stage 2)
 └── (same structure)
 ```
 
-- **22,400** training samples, **640** test samples.
-- Portrait **4:3** aspect ratio: low-res `256×192`, high-res `1024×768`.
+- Portrait **4:3** aspect ratio: low-res `256x192`, high-res `1024x768`.
 - Source datasets: `FSDSRD`, `SD7K`, `SynDoc_Wild_3D`, `OSR`, `Jung`, `RDD`.
 
 ## How the CSV is used
@@ -35,26 +34,26 @@ and `target/` images.
 ### Stage 1 — Train IOANet (low-res core)
 ```bash
 python src/train_stage1.py \
-    --data_root Mixed_Shadow_Dataset_256x192 \
-    --epochs 1000 \
-    --batch_size 8 \
-    --device cuda
+    --data_root /kaggle/input/master_mix_192x256 \
+    --epochs 250 \
+    --batch_size 32 \
+    --debug
 ```
-- Trains `IOANet` at `256×192` with `L1*10 + LPIPS*5`.
-- Saves `checkpoints/ioanet_final.pth`.
+- Trains `IOANet` at `256x192` with `L1*10 + LPIPS*5`.
+- Saves `checkpoints/stage1/best_model.pth`.
 
 ### Stage 2 — Train upsampler (high-res)
 ```bash
 python src/train_stage2.py \
-    --data_root Mixed_Shadow_Dataset_1024x768 \
-    --ioanet_ckpt checkpoints/ioanet_final.pth \
+    --data_root /kaggle/input/master_mix_768x1024 \
+    --ioanet_ckpt checkpoints/stage1/best_model.pth \
     --epochs 200 \
     --batch_size 4 \
-    --device cuda
+    --debug
 ```
 - Freezes IOANet (`.eval()` + `requires_grad=False`).
 - Trains the Laplacian pyramid upsampler with L1 loss.
-- Saves `checkpoints/upsampler_final.pth`.
+- Saves `checkpoints/stage2/best_model.pth`.
 
 ## Kaggle notebook setup
 1. Add the dataset to your notebook.
