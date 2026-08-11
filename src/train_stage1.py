@@ -123,8 +123,13 @@ def main():
     # --- Model ---
     model = IOANet(pretrained=args.pretrained).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=150, T_mult=1, eta_min=1e-6
+    # Monotonic cosine decay over the remaining epochs (150 -> 1000).
+    # NOTE: switched from CosineAnnealingWarmRestarts (T_0=150) to plain
+    # CosineAnnealingLR so the LR keeps decaying instead of restarting to 2e-4
+    # at epoch 150. A warm restart would overshoot the delicate high-frequency
+    # weights and re-introduce grid/blur artifacts (per NotebookLM synthesis).
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=850, eta_min=1e-6
     )
     criterion = CombinedLoss(w_l1=L1_WEIGHT, w_lpips=LPIPS_WEIGHT, device=device)
 
@@ -142,11 +147,20 @@ def main():
         if not args.finetune and isinstance(ckpt, dict):
             if "optimizer_state_dict" in ckpt:
                 optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-            if "scheduler_state_dict" in ckpt:
-                scheduler.load_state_dict(ckpt["scheduler_state_dict"])
             start_epoch = ckpt.get("epoch", 0)
             best_val_loss = ckpt.get("best_val_loss", float("inf"))
             patience_counter = ckpt.get("patience_counter", 0)
+            # Scheduler type changed (WarmRestarts -> CosineAnnealingLR), so the
+            # saved scheduler_state_dict is incompatible. Instead, advance the new
+            # scheduler to the resumed epoch so the cosine curve continues decaying
+            # from the correct point. base_lrs was captured at construction (2e-4),
+            # so we only set last_epoch (do NOT call _initial_step, which would
+            # re-read the loaded optimizer LR ~1e-6 and corrupt base_lrs).
+            scheduler.last_epoch = start_epoch - 1
+            # Compute the LR for the resumed epoch (t=start_epoch) so the first
+            # resumed epoch does NOT run at the construction LR (2e-4). step()
+            # increments last_epoch to start_epoch and sets the correct cosine LR.
+            scheduler.step()
             print(f"[OK] Resumed: epoch={start_epoch}, best={best_val_loss:.4f}")
 
     # --- Metrics guide ---
