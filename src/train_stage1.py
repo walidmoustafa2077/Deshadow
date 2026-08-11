@@ -151,15 +151,20 @@ def main():
             best_val_loss = ckpt.get("best_val_loss", float("inf"))
             patience_counter = ckpt.get("patience_counter", 0)
             # Scheduler type changed (WarmRestarts -> CosineAnnealingLR), so the
-            # saved scheduler_state_dict is incompatible. Instead, advance the new
-            # scheduler to the resumed epoch so the cosine curve continues decaying
-            # from the correct point. base_lrs was captured at construction (2e-4),
-            # so we only set last_epoch (do NOT call _initial_step, which would
+            # saved scheduler_state_dict is incompatible. Instead, treat the
+            # remaining 850 epochs (150 -> 1000) as a FRESH cosine curve starting
+            # at step 0. Setting last_epoch=-1 makes epoch 150 = step 0 = 2e-4,
+            # decaying monotonically to 1e-6 at exactly epoch 1000.
+            # NOTE: do NOT set last_epoch = start_epoch - 1 (149) -- that would
+            # make the scheduler think it already did 149 steps, so it would hit
+            # eta_min at epoch 850 and then cycle back up (ruining late-stage
+            # convergence). base_lrs was captured at construction (2e-4), so we
+            # only reset last_epoch (do NOT call _initial_step, which would
             # re-read the loaded optimizer LR ~1e-6 and corrupt base_lrs).
-            scheduler.last_epoch = start_epoch - 1
-            # Compute the LR for the resumed epoch (t=start_epoch) so the first
-            # resumed epoch does NOT run at the construction LR (2e-4). step()
-            # increments last_epoch to start_epoch and sets the correct cosine LR.
+            scheduler.last_epoch = -1
+            # Compute the LR for the resumed epoch (t=0 -> 2e-4) so the first
+            # resumed epoch does NOT run at the loaded optimizer LR (~1e-6).
+            # step() increments last_epoch to 0 and sets the correct cosine LR.
             scheduler.step()
             print(f"[OK] Resumed: epoch={start_epoch}, best={best_val_loss:.4f}")
 
