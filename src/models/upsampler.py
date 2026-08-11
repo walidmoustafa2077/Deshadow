@@ -98,35 +98,40 @@ class LaplacianPyramidUpsampler(nn.Module):
         """
         # Decompose the high-res input into a Laplacian pyramid.
         residuals, low_freq = get_laplacian_pyramid(high_res_input, self.levels)
-        # residuals: [h_{L-1}, ..., h_0] (smallest to largest)
+        # residuals: [h_0, ..., h_{L-1}] (LARGEST to smallest)
         # low_freq: I_L at low resolution
 
         # The low-res shadow-free output is our translated low-frequency Î_L.
         translated_low = low_res_out
 
-        # --- Level L-1 (smallest): generate the base mask ---
-        residual = residuals[0]
-        target_size = residual.shape[2:]
+        # Per LPTN, the base mask is generated at the SMALLEST level h_{L-1}
+        # (residuals[-1]) from [h_{L-1}, up(I_L), up(Î_L)], then progressively
+        # upsampled (bilinear x2) + fine-tuned for each larger level.
+        smallest = residuals[-1]
+        target_size = smallest.shape[2:]
         up_il = F.interpolate(low_freq, size=target_size, mode="bilinear",
                               align_corners=False)
         up_il_hat = F.interpolate(translated_low, size=target_size,
                                   mode="bilinear", align_corners=False)
-        mask_input = torch.cat([residual, up_il, up_il_hat], dim=1)
+        mask_input = torch.cat([smallest, up_il, up_il_hat], dim=1)
         mask = self.mask_generator(mask_input)
-        refined_residuals = [residual * mask]
 
-        # --- Higher levels: progressively upsample + refine the mask ---
-        for idx in range(1, self.levels):
+        # refined_residuals indexed the same as residuals (largest -> smallest).
+        refined_residuals = [None] * self.levels
+        refined_residuals[-1] = smallest * mask
+
+        # --- Larger levels: progressively upsample + refine the mask ---
+        for idx in range(self.levels - 2, -1, -1):
             residual = residuals[idx]
             # Upsample the previous mask x2 (bilinear) and fine-tune.
             mask = F.interpolate(mask, scale_factor=2, mode="bilinear",
                                  align_corners=False)
-            mask = self.mask_finetune[idx - 1](mask)
+            mask = self.mask_finetune[idx](mask)
             # Match resolution exactly (in case of rounding).
             if mask.shape[2:] != residual.shape[2:]:
                 mask = F.interpolate(mask, size=residual.shape[2:],
                                      mode="bilinear", align_corners=False)
-            refined_residuals.append(residual * mask)
+            refined_residuals[idx] = residual * mask
 
         # Reconstruct: start from translated low-freq, add refined residuals.
         output = translated_low

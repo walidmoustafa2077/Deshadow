@@ -76,18 +76,26 @@ class IOANet(nn.Module):
         skip_channels = [16, 24, 32, 96, 320]
 
         # ---- Decoder: FBNet-style blocks (bottom-up) ----
-        # Encoder output is at 1/32 scale (1280 channels) -> decoder input.
-        # Each block upsamples x2 internally and outputs channels matching the
-        # skip at the upsampled resolution:
+        # Encoder output is at 1/32 scale (1280 channels). We project it down
+        # to 320 channels and fuse with the 5th skip (320ch at 1/32), giving
+        # the decoder input at 1/32 scale with 320 channels. Each block then
+        # upsamples x2 internally and outputs channels matching the skip at
+        # the upsampled resolution:
         #   1/32->1/16 (skip 96), 1/16->1/8 (skip 32), 1/8->1/4 (skip 24),
         #   1/4->1/2 (skip 16). The final 1/2->1/1 upsampling is done by
         #   final_conv (16 -> 3 channels).
         decoder_channels = [96, 32, 24, 16]
         self.decoder_blocks = nn.ModuleList()
-        in_ch = 1280
+        in_ch = 320
         for out_ch in decoder_channels:
             self.decoder_blocks.append(FBNetDecoderBlock(in_ch, out_ch))
             in_ch = out_ch
+
+        # ---- 5th skip connection (1/32 scale) ----
+        # The paper/FastDepth uses FIVE skip connections. The 5th skip is the
+        # 320-channel feature at 1/32 scale (features[17]), fused into the
+        # decoder input (1280ch from features[18]) via a 1x1 projection.
+        self.skip_proj = nn.Conv2d(1280, 320, kernel_size=1)
 
         # ---- Final 1x1 conv to 3-channel output ----
         self.final_conv = nn.Conv2d(16, 3, kernel_size=1)
@@ -109,9 +117,14 @@ class IOANet(nn.Module):
 
         # Decoder forward with skip connections (bottom-up).
         # skips are ordered [1/2, 1/4, 1/8, 1/16, 1/32] (indices 0..4).
-        # The encoder output (1280 ch) is already at 1/32 scale, so the 1/32
-        # skip (index 4) is redundant. We fuse with skips at 1/16, 1/8, 1/4,
-        # 1/2 (indices 3, 2, 1, 0) as each block upsamples x2.
+        # The encoder output (1280 ch) is already at 1/32 scale. We fuse the
+        # 1/32 skip (index 4, 320ch) into the decoder input via skip_proj,
+        # then fuse with skips at 1/16, 1/8, 1/4, 1/2 (indices 3, 2, 1, 0) as
+        # each block upsamples x2.
+        # 5th skip: fuse 1/32 feature (320ch) into the 1280ch decoder input.
+        skip_32 = skips[4]
+        x = self.skip_proj(x) + skip_32
+
         for idx, block in enumerate(self.decoder_blocks):
             # Block upsamples x2 internally and outputs matching channels.
             x = block(x)

@@ -45,8 +45,13 @@ CKPT_INTERVAL = 50        # save periodic checkpoint every N epochs
 EARLY_STOP_PATIENCE = 50  # Stage 1 patience
 EARLY_STOP_PATIENCE_S2 = 30  # Stage 2 patience
 GRAD_CLIP = 1.0           # gradient clipping max norm
-LR_SCHEDULER = "cosine_warm_restarts"  # Stage 1
-LR_SCHEDULER_S2 = "cosine"             # Stage 2
+# Scheduler: ReduceLROnPlateau (epoch-count agnostic, seamless resume)
+LR_SCHEDULER = "reduce_on_plateau"  # Stage 1
+LR_SCHEDULER_S2 = "reduce_on_plateau"  # Stage 2
+PLATEAU_FACTOR = 0.5      # halve LR on plateau
+PLATEAU_PATIENCE = 10     # validation checks before reducing
+PLATEAU_COOLDOWN = 5      # epochs to wait after a reduction
+PLATEAU_MIN_LR = 1e-6     # LR floor
 DEBUG = True              # save debug sample images
 
 # Output directories

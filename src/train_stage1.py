@@ -128,8 +128,9 @@ def main():
     # CosineAnnealingLR so the LR keeps decaying instead of restarting to 2e-4
     # at epoch 150. A warm restart would overshoot the delicate high-frequency
     # weights and re-introduce grid/blur artifacts (per NotebookLM synthesis).
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=850, eta_min=1e-6
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=10,
+        cooldown=5, min_lr=1e-6
     )
     criterion = CombinedLoss(w_l1=L1_WEIGHT, w_lpips=LPIPS_WEIGHT, device=device)
 
@@ -150,22 +151,12 @@ def main():
             start_epoch = ckpt.get("epoch", 0)
             best_val_loss = ckpt.get("best_val_loss", float("inf"))
             patience_counter = ckpt.get("patience_counter", 0)
-            # Scheduler type changed (WarmRestarts -> CosineAnnealingLR), so the
-            # saved scheduler_state_dict is incompatible. Instead, treat the
-            # remaining 850 epochs (150 -> 1000) as a FRESH cosine curve starting
-            # at step 0. Setting last_epoch=-1 makes epoch 150 = step 0 = 2e-4,
-            # decaying monotonically to 1e-6 at exactly epoch 1000.
-            # NOTE: do NOT set last_epoch = start_epoch - 1 (149) -- that would
-            # make the scheduler think it already did 149 steps, so it would hit
-            # eta_min at epoch 850 and then cycle back up (ruining late-stage
-            # convergence). base_lrs was captured at construction (2e-4), so we
-            # only reset last_epoch (do NOT call _initial_step, which would
-            # re-read the loaded optimizer LR ~1e-6 and corrupt base_lrs).
-            scheduler.last_epoch = -1
-            # Compute the LR for the resumed epoch (t=0 -> 2e-4) so the first
-            # resumed epoch does NOT run at the loaded optimizer LR (~1e-6).
-            # step() increments last_epoch to 0 and sets the correct cosine LR.
-            scheduler.step()
+            # Seamless resume: restore the scheduler state so training continues
+            # exactly as if it had never been interrupted. ReduceLROnPlateau's
+            # state captures last_epoch, best, num_bad_epochs, cooldown_counter
+            # and mode_worse, so the LR/patience/cooldown resume in-place.
+            if "scheduler_state_dict" in ckpt:
+                scheduler.load_state_dict(ckpt["scheduler_state_dict"])
             print(f"[OK] Resumed: epoch={start_epoch}, best={best_val_loss:.4f}")
 
     # --- Metrics guide ---
@@ -271,6 +262,8 @@ def main():
                 writer.add_scalar(f"val/{k}", v, epoch)
 
             val_loss = val_losses["total"]
+            # Step the ReduceLROnPlateau scheduler on the validation loss.
+            scheduler.step(val_loss)
             improved = val_loss < best_val_loss
             status = "[+]" if improved else "[-]"
             print(f"{status} Epoch {epoch+1:3d} | Loss: {val_loss:.4f} | "
@@ -318,8 +311,6 @@ def main():
                 "best_val_loss": best_val_loss,
                 "patience_counter": patience_counter,
             }, ckpt_path)
-
-        scheduler.step()
 
     # --- Final save ---
     torch.save(model.state_dict(), checkpoint_dir / "ioanet_final.pth")

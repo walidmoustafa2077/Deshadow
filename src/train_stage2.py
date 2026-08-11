@@ -140,8 +140,9 @@ def main():
     # --- Trainable upsampler ---
     upsampler = LaplacianPyramidUpsampler(levels=2).to(device)
     optimizer = torch.optim.Adam(upsampler.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-6
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=10,
+        cooldown=5, min_lr=1e-6
     )
     criterion = L1Loss()
 
@@ -266,6 +267,8 @@ def main():
             for k, v in val_metrics.items():
                 writer.add_scalar(f"val/{k}", v, epoch)
 
+            # Step the ReduceLROnPlateau scheduler on the validation loss.
+            scheduler.step(avg_val_loss)
             improved = avg_val_loss < best_val_loss
             status = "[+]" if improved else "[-]"
             print(f"{status} Epoch {epoch+1:3d} | Loss: {avg_val_loss:.4f} | "
@@ -313,8 +316,6 @@ def main():
                 "best_val_loss": best_val_loss,
                 "patience_counter": patience_counter,
             }, ckpt_path)
-
-        scheduler.step()
 
     # --- Final save ---
     torch.save(upsampler.state_dict(), checkpoint_dir / "upsampler_final.pth")
